@@ -7,7 +7,7 @@ import (
     "fmt"
     "net/http"
 
-    "github.com/Southclaws/go-samp-query"
+    sampquery "github.com/Southclaws/go-samp-query"
 )
 
 type Player struct {
@@ -25,21 +25,21 @@ func main() {
 func playersHandler(w http.ResponseWriter, r *http.Request) {
     host := r.URL.Query().Get("host")
     if host == "" {
-        http.Error(w, "Missing host param (e.g., host=1.2.3.4:7777)", 400)
+        http.Error(w, "Missing host param (e.g., host=1.2.3.4:7777)", http.StatusBadRequest)
         return
     }
 
     ctx := context.Background()
-    q, err := sampquery.NewLegacyQuery(host)
+    q, err := sampquery.New(host)
     if err != nil {
-        http.Error(w, "Failed to connect: "+err.Error(), 500)
+        http.Error(w, "Failed to connect: "+err.Error(), http.StatusInternalServerError)
         return
     }
     defer q.Close()
 
-    data, err := q.SendQuery(ctx, sampquery.QueryType(0x64)) // Opcode 'd'
+    data, err := q.SendQuery(ctx, sampquery.QueryType('d')) // 'd' = detailed player info
     if err != nil {
-        http.Error(w, "Query failed: "+err.Error(), 500)
+        http.Error(w, "Query failed: "+err.Error(), http.StatusInternalServerError)
         return
     }
 
@@ -49,24 +49,37 @@ func playersHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func parsePlayers(b []byte) []Player {
-    // Skip initial header
     offset := 11
+    if len(b) < offset+1 {
+        return nil
+    }
+
     count := int(b[offset])
     offset++
 
     players := make([]Player, 0, count)
-    for i := 0; i < count; i++ {
-        id := int(b[offset]); offset++
+    for i := 0; i < count && offset < len(b); i++ {
+        if offset+1 >= len(b) {
+            break
+        }
 
-        nl := int(b[offset]); offset++
-        name := string(b[offset : offset+nl])
-        offset += nl
+        id := int(b[offset])
+        offset++
+
+        nameLen := int(b[offset])
+        offset++
+
+        if offset+nameLen+8 > len(b) {
+            break
+        }
+
+        name := string(b[offset : offset+nameLen])
+        offset += nameLen
 
         score := int(binary.LittleEndian.Uint32(b[offset : offset+4]))
         offset += 4
 
-        // Skip ping field (4 bytes), not needed
-        offset += 4
+        offset += 4 // skip ping
 
         players = append(players, Player{
             ID:    id,
